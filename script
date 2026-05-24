@@ -1,0 +1,320 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+
+-- Переменные для меню
+local screenGui = nil
+local mainFrame = nil
+local isMenuOpen = false
+local isDragging = false
+local dragStart = nil
+local dragStartPos = nil
+
+-- Переменные для сохранения позиции и состояния
+local savedPosition = nil
+local antiA90Active = false
+local doorEspActive = false
+
+-- Переменные для функций
+local doorEspCoroutine = nil
+local antiA90Coroutine = nil
+
+-- Функция удаления всех хайлайтов
+local function removeAllHighlights()
+    local currentRooms = workspace:FindFirstChild("CurrentRooms")
+    if currentRooms then
+        for _, v in next, currentRooms:GetChildren() do
+            if v and v:FindFirstChild("Door") and v.Door:FindFirstChild("Door") then
+                local doorPart = v.Door.Door
+                local highlight = doorPart:FindFirstChild("DoorHighlight")
+                if highlight then
+                    highlight:Destroy()
+                end
+            end
+        end
+    end
+end
+
+-- Функция создания меню
+local function createMenu()
+    screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "DraggableMenu"
+    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    
+    mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 200, 0, 120)
+    
+    -- Устанавливаем сохраненную позицию или позицию по умолчанию
+    if savedPosition then
+        mainFrame.Position = savedPosition
+    else
+        mainFrame.Position = UDim2.new(0.5, -100, 0.5, -60)
+    end
+    
+    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    mainFrame.BackgroundTransparency = 0.1
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Active = true
+    mainFrame.Draggable = false
+    mainFrame.Parent = screenGui
+    
+    -- Сглаживание углов
+    local uiCorner = Instance.new("UICorner")
+    uiCorner.CornerRadius = UDim.new(0, 8)
+    uiCorner.Parent = mainFrame
+    
+    -- Заголовок (для перетаскивания)
+    local titleBar = Instance.new("Frame")
+    titleBar.Name = "TitleBar"
+    titleBar.Size = UDim2.new(1, 0, 0, 30)
+    titleBar.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    titleBar.BackgroundTransparency = 0.1
+    titleBar.BorderSizePixel = 0
+    titleBar.Parent = mainFrame
+    
+    local titleCorner = Instance.new("UICorner")
+    titleCorner.CornerRadius = UDim.new(0, 8)
+    titleCorner.Parent = titleBar
+    
+    local titleText = Instance.new("TextLabel")
+    titleText.Size = UDim2.new(1, 0, 1, 0)
+    titleText.BackgroundTransparency = 1
+    titleText.Text = "Меню"
+    titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    titleText.TextSize = 14
+    titleText.Font = Enum.Font.GothamBold
+    titleText.TextXAlignment = Enum.TextXAlignment.Center
+    titleText.Parent = titleBar
+    
+    -- Кнопка Door ESP
+    local doorEspButton = Instance.new("TextButton")
+    doorEspButton.Size = UDim2.new(0, 180, 0, 30)
+    doorEspButton.Position = UDim2.new(0.5, -90, 0, 40)
+    doorEspButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    doorEspButton.BackgroundTransparency = 0.1
+    doorEspButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    doorEspButton.TextSize = 12
+    doorEspButton.Font = Enum.Font.Gotham
+    doorEspButton.BorderSizePixel = 0
+    doorEspButton.Parent = mainFrame
+    
+    -- Устанавливаем состояние кнопки Door ESP
+    if doorEspActive then
+        doorEspButton.Text = "Door ESP (Вкл)"
+        doorEspButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+    else
+        doorEspButton.Text = "Door ESP (Выкл)"
+        doorEspButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    end
+    
+    local buttonCorner1 = Instance.new("UICorner")
+    buttonCorner1.CornerRadius = UDim.new(0, 4)
+    buttonCorner1.Parent = doorEspButton
+    
+    -- Кнопка Anti-pidor A-90
+    local antiA90Button = Instance.new("TextButton")
+    antiA90Button.Size = UDim2.new(0, 180, 0, 30)
+    antiA90Button.Position = UDim2.new(0.5, -90, 0, 80)
+    antiA90Button.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    antiA90Button.BackgroundTransparency = 0.1
+    antiA90Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    antiA90Button.TextSize = 12
+    antiA90Button.Font = Enum.Font.Gotham
+    antiA90Button.BorderSizePixel = 0
+    antiA90Button.Parent = mainFrame
+    
+    -- Устанавливаем состояние кнопки Anti-pidor A-90
+    if antiA90Active then
+        antiA90Button.Text = "Anti-pidor A-90 (Active)"
+        antiA90Button.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+    else
+        antiA90Button.Text = "Anti-pidor A-90"
+        antiA90Button.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    end
+    
+    local buttonCorner2 = Instance.new("UICorner")
+    buttonCorner2.CornerRadius = UDim.new(0, 4)
+    buttonCorner2.Parent = antiA90Button
+    
+    -- Функции для кнопок
+    doorEspButton.MouseButton1Click:Connect(function()
+        doorEspActive = not doorEspActive
+        
+        if doorEspActive then
+            doorEspButton.Text = "Door ESP (Вкл)"
+            doorEspButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+            
+            -- Запуск Door ESP
+            if doorEspCoroutine then
+                coroutine.close(doorEspCoroutine)
+            end
+            doorEspCoroutine = coroutine.create(function()
+                while doorEspActive do
+                    task.wait(0.04)
+                    local currentRooms = workspace:FindFirstChild("CurrentRooms")
+                    if currentRooms then
+                        for _, v in next, currentRooms:GetChildren() do
+                            if v and v:FindFirstChild("Door") and v.Door:FindFirstChild("Door") then
+                                local doorPart = v.Door.Door
+                                if doorPart and not doorPart:FindFirstChild("DoorHighlight") then
+                                    local hg = Instance.new("Highlight")
+                                    hg.Name = "DoorHighlight"
+                                    hg.Parent = doorPart
+                                    hg.FillColor = Color3.fromRGB(241, 196, 15)
+                                    hg.FillTransparency = 0.5
+                                    hg.OutlineTransparency = 0
+                                    hg.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+            coroutine.resume(doorEspCoroutine)
+        else
+            doorEspButton.Text = "Door ESP (Выкл)"
+            doorEspButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+            
+            -- Остановка Door ESP и удаление всех хайлайтов
+            if doorEspCoroutine then
+                coroutine.close(doorEspCoroutine)
+                doorEspCoroutine = nil
+            end
+            removeAllHighlights()
+        end
+    end)
+    
+    -- Кнопка Anti-pidor A-90 (один раз активируется и не выключается)
+    antiA90Button.MouseButton1Click:Connect(function()
+        if not antiA90Active then
+            antiA90Active = true
+            antiA90Button.Text = "Anti-pidor A-90 (Active)"
+            antiA90Button.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+            
+            -- Запуск Anti-pidor A-90 (бесконечный цикл)
+            if antiA90Coroutine then
+                coroutine.close(antiA90Coroutine)
+            end
+            antiA90Coroutine = coroutine.create(function()
+                while antiA90Active do
+                    task.wait(0.1)
+                    local success, jumpscare = pcall(function()
+                        local mainUI = LocalPlayer.PlayerGui:FindFirstChild("MainUI")
+                        if mainUI then
+                            local jumpscareFolder = mainUI:FindFirstChild("Jumpscare")
+                            if jumpscareFolder then
+                                return jumpscareFolder:FindFirstChild("Jumpscare_A90")
+                            end
+                        end
+                        return nil
+                    end)
+                    
+                    if success and jumpscare then
+                        pcall(function()
+                            jumpscare:Destroy()
+                        end)
+                    end
+                end
+            end)
+            coroutine.resume(antiA90Coroutine)
+        end
+    end)
+    
+    -- Логика перетаскивания с сохранением позиции
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            isDragging = true
+            dragStart = input.Position
+            dragStartPos = mainFrame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    isDragging = false
+                    -- Сохраняем позицию при отпускании
+                    savedPosition = mainFrame.Position
+                end
+            end)
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            mainFrame.Position = UDim2.new(
+                dragStartPos.X.Scale, 
+                dragStartPos.X.Offset + delta.X,
+                dragStartPos.Y.Scale, 
+                dragStartPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+end
+
+-- Управление открытием/закрытием по клавише K
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    if input.KeyCode == Enum.KeyCode.K then
+        if isMenuOpen then
+            if screenGui then
+                -- Сохраняем позицию перед закрытием
+                if mainFrame then
+                    savedPosition = mainFrame.Position
+                end
+                screenGui:Destroy()
+                screenGui = nil
+                isMenuOpen = false
+            end
+        else
+            createMenu()
+            isMenuOpen = true
+        end
+    end
+end)
+
+-- Очистка при перерождении персонажа, но с сохранением состояния Anti-pidor
+LocalPlayer.CharacterAdded:Connect(function()
+    -- Останавливаем Door ESP если он активен
+    if doorEspActive then
+        if doorEspCoroutine then
+            coroutine.close(doorEspCoroutine)
+            doorEspCoroutine = nil
+        end
+        removeAllHighlights()
+        -- Сбрасываем состояние Door ESP при перерождении
+        doorEspActive = false
+    end
+    
+    -- Anti-pidor A-90 продолжает работать если был активирован
+    if antiA90Active and not antiA90Coroutine then
+        antiA90Coroutine = coroutine.create(function()
+            while antiA90Active do
+                task.wait(0.1)
+                local success, jumpscare = pcall(function()
+                    local mainUI = LocalPlayer.PlayerGui:FindFirstChild("MainUI")
+                    if mainUI then
+                        local jumpscareFolder = mainUI:FindFirstChild("Jumpscare")
+                        if jumpscareFolder then
+                            return jumpscareFolder:FindFirstChild("Jumpscare_A90")
+                        end
+                    end
+                    return nil
+                end)
+                
+                if success and jumpscare then
+                    pcall(function()
+                        jumpscare:Destroy()
+                    end)
+                end
+            end
+        end)
+        coroutine.resume(antiA90Coroutine)
+    end
+end)
+
+-- Информация в консоль
+print("Скрипт загружен! Нажмите K для открытия меню")
+if antiA90Active then
+    print("Anti-pidor A-90 уже активирован")
+end
