@@ -1,7 +1,11 @@
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 local LocalPlayer = Players.LocalPlayer
-local Mouse = LocalPlayer:GetMouse()
+
+-- Глобальная переменная для отслеживания активности скрипта
+local scriptLoaded = true
 
 -- Переменные для меню
 local screenGui = nil
@@ -10,18 +14,38 @@ local isMenuOpen = false
 local isDragging = false
 local dragStart = nil
 local dragStartPos = nil
+local currentTab = "PLAYER"
 
 -- Переменные для сохранения позиции и состояния
 local savedPosition = nil
 local antiA90Active = false
+local entityNotificationsActive = false
 local doorEspActive = false
+local itemEspActive = false
+local goldEspActive = false
+local hideEspActive = false
 
 -- Переменные для функций
 local doorEspCoroutine = nil
 local antiA90Coroutine = nil
+local entityNotificationsCoroutine = nil
+local itemEspCoroutine = nil
+local goldEspCoroutine = nil
+local hideEspCoroutine = nil
+local goldHighlightCache = {}
+local itemHighlightCache = {}
+local doorHighlightCache = {}
+local hideHighlightCache = {}
 
--- Функция удаления всех хайлайтов
-local function removeAllHighlights()
+-- Функция удаления всех хайлайтов дверей
+local function removeAllDoorHighlights()
+    for doorPart, highlight in pairs(doorHighlightCache) do
+        if highlight and highlight.Parent then
+            highlight:Destroy()
+        end
+    end
+    table.clear(doorHighlightCache)
+    
     local currentRooms = workspace:FindFirstChild("CurrentRooms")
     if currentRooms then
         for _, v in next, currentRooms:GetChildren() do
@@ -36,233 +60,1426 @@ local function removeAllHighlights()
     end
 end
 
+-- Функции для Entity Notifications
+local entitiesList = {
+    "Rush", "Ambush", "Figure", "Eyes", "Jack", "Dread",
+    "Giggle", "Gloombats", "Blitz", "Lookman", "A-60", "A-120",
+    "Jeff The Killer", "Sally", "Monument"
+}
+
+local ignoreWords = { "fake", "damage" }
+local detectedEntities = {}
+local notificationConnections = {}
+
+local function shouldIgnore(name)
+    local lowerName = string.lower(name)
+    for _, ignoreWord in pairs(ignoreWords) do
+        if string.find(lowerName, ignoreWord) then
+            return true
+        end
+    end
+    return false
+end
+
+local function isTargetEntity(name)
+    if shouldIgnore(name) then
+        return false, nil
+    end
+    
+    for _, entityName in pairs(entitiesList) do
+        if name == entityName then
+            return true, entityName
+        end
+        if string.find(name, entityName) then
+            return true, entityName
+        end
+    end
+    return false, nil
+end
+
+local function speakText(text)
+    pcall(function()
+        local tts = game:GetService("TextToSpeech")
+        tts:Say(text, "en-US")
+    end)
+end
+
+local function showNotification(entityName, originalName)
+    if not entityNotificationsActive or not scriptLoaded then return end
+    
+    print("[ОБНАРУЖЕНО] " .. originalName .. " -> " .. entityName)
+    speakText(entityName)
+    
+    for _, child in pairs(LocalPlayer.PlayerGui:GetChildren()) do
+        if child.Name == "BeautifulAlert" then
+            child:Destroy()
+        end
+    end
+    
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "BeautifulAlert"
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    gui.Parent = LocalPlayer.PlayerGui
+    
+    local container = Instance.new("Frame")
+    container.Size = UDim2.new(0, 280, 0, 65)
+    container.Position = UDim2.new(0.5, -140, 1, -75)
+    container.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    container.BackgroundTransparency = 0.05
+    container.BorderSizePixel = 0
+    container.ClipsDescendants = true
+    
+    local glass = Instance.new("Frame")
+    glass.Size = UDim2.new(1, 0, 1, 0)
+    glass.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    glass.BackgroundTransparency = 0.4
+    glass.BorderSizePixel = 0
+    glass.Parent = container
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 12)
+    corner.Parent = container
+    
+    local border = Instance.new("Frame")
+    border.Size = UDim2.new(1, 0, 0, 2)
+    border.Position = UDim2.new(0, 0, 0, 0)
+    border.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    border.BorderSizePixel = 0
+    
+    local borderCorner = Instance.new("UICorner")
+    borderCorner.CornerRadius = UDim.new(0, 12)
+    borderCorner.Parent = border
+    border.Parent = container
+    
+    local accent = Instance.new("Frame")
+    accent.Size = UDim2.new(0, 4, 1, 0)
+    accent.Position = UDim2.new(0, 0, 0, 0)
+    accent.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+    accent.BorderSizePixel = 0
+    accent.Parent = container
+    
+    local iconCircle = Instance.new("Frame")
+    iconCircle.Size = UDim2.new(0, 32, 0, 32)
+    iconCircle.Position = UDim2.new(0, 12, 0.5, -16)
+    iconCircle.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+    iconCircle.BackgroundTransparency = 0.15
+    iconCircle.BorderSizePixel = 0
+    
+    local iconCorner = Instance.new("UICorner")
+    iconCorner.CornerRadius = UDim.new(1, 0)
+    iconCorner.Parent = iconCircle
+    
+    local iconText = Instance.new("TextLabel")
+    iconText.Size = UDim2.new(1, 0, 1, 0)
+    iconText.BackgroundTransparency = 1
+    iconText.Text = "⚠️"
+    iconText.TextColor3 = Color3.fromRGB(255, 100, 100)
+    iconText.TextSize = 18
+    iconText.Font = Enum.Font.GothamBold
+    iconText.Parent = iconCircle
+    
+    iconCircle.Parent = container
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0, 200, 0, 18)
+    label.Position = UDim2.new(0, 54, 0, 10)
+    label.BackgroundTransparency = 1
+    label.Text = "Обнаружена сущность"
+    label.TextColor3 = Color3.fromRGB(180, 180, 200)
+    label.TextSize = 11
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.Gotham
+    label.TextTransparency = 0.2
+    label.Parent = container
+    
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Size = UDim2.new(0, 200, 0, 30)
+    nameLabel.Position = UDim2.new(0, 54, 0, 28)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Text = entityName
+    nameLabel.TextColor3 = Color3.fromRGB(255, 220, 150)
+    nameLabel.TextSize = 20
+    nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.Parent = container
+    
+    local dot = Instance.new("Frame")
+    dot.Size = UDim2.new(0, 6, 0, 6)
+    dot.Position = UDim2.new(1, -14, 0.5, -3)
+    dot.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    dot.BorderSizePixel = 0
+    
+    local dotCorner = Instance.new("UICorner")
+    dotCorner.CornerRadius = UDim.new(1, 0)
+    dotCorner.Parent = dot
+    dot.Parent = container
+    
+    container.Parent = gui
+    
+    container.Position = UDim2.new(0.5, -140, 1, 20)
+    container.BackgroundTransparency = 1
+    label.TextTransparency = 1
+    nameLabel.TextTransparency = 1
+    iconCircle.BackgroundTransparency = 1
+    iconText.TextTransparency = 1
+    dot.BackgroundTransparency = 1
+    accent.BackgroundTransparency = 1
+    
+    for i = 0, 1, 0.05 do
+        task.wait(0.008)
+        container.Position = UDim2.new(0.5, -140, 1, 20 - (i * 95))
+        container.BackgroundTransparency = 0.05 * (1 - i)
+        label.TextTransparency = 0.2 + (1 - i) * 0.8
+        nameLabel.TextTransparency = 1 - i
+        iconCircle.BackgroundTransparency = 0.15 * (1 - i)
+        iconText.TextTransparency = 1 - i
+        dot.BackgroundTransparency = 1 - i
+        accent.BackgroundTransparency = 1 - i
+    end
+    
+    local pulseTask = task.spawn(function()
+        while gui and gui.Parent and entityNotificationsActive do
+            for size = 6, 10, 1 do
+                if not gui or not gui.Parent then break end
+                dot.Size = UDim2.new(0, size, 0, size)
+                dot.Position = UDim2.new(1, -14 - (size-6)/2, 0.5, -size/2)
+                task.wait(0.1)
+            end
+            for size = 10, 6, -1 do
+                if not gui or not gui.Parent then break end
+                dot.Size = UDim2.new(0, size, 0, size)
+                dot.Position = UDim2.new(1, -14 - (size-6)/2, 0.5, -size/2)
+                task.wait(0.1)
+            end
+        end
+    end)
+    
+    task.wait(4)
+    
+    if pulseTask then task.cancel(pulseTask) end
+    for i = 0, 1, 0.05 do
+        task.wait(0.008)
+        container.Position = UDim2.new(0.5, -140, 0.92, i * 10)
+        container.BackgroundTransparency = 0.05 + (i * 0.95)
+        label.TextTransparency = 1 - (1 - i) * 0.8
+        nameLabel.TextTransparency = 1 - (1 - i)
+        iconCircle.BackgroundTransparency = 0.15 + (i * 0.85)
+        iconText.TextTransparency = 1 - (1 - i)
+        dot.BackgroundTransparency = 1 - (1 - i)
+        accent.BackgroundTransparency = 1 - (1 - i)
+    end
+    
+    gui:Destroy()
+end
+
+local function isPlayer(instance)
+    if instance:IsA("Model") then
+        return Players:GetPlayerFromCharacter(instance) ~= nil
+    end
+    return false
+end
+
+local function cleanDetected()
+    for obj, _ in pairs(detectedEntities) do
+        if not obj or not obj.Parent then
+            detectedEntities[obj] = nil
+        end
+    end
+end
+
+local function setupEntityNotifications()
+    if not entityNotificationsActive or not scriptLoaded then return end
+    
+    for _, conn in pairs(notificationConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(notificationConnections)
+    table.clear(detectedEntities)
+    
+    local childAddedConn = workspace.ChildAdded:Connect(function(child)
+        task.wait(0.05)
+        cleanDetected()
+        
+        if not isPlayer(child) and entityNotificationsActive then
+            local childName = child.Name
+            local isTarget, matchedName = isTargetEntity(childName)
+            
+            if isTarget and not detectedEntities[child] then
+                detectedEntities[child] = true
+                showNotification(matchedName, childName)
+            end
+        end
+    end)
+    table.insert(notificationConnections, childAddedConn)
+    
+    task.wait(1)
+    for _, obj in pairs(workspace:GetChildren()) do
+        if not isPlayer(obj) and entityNotificationsActive then
+            local objName = obj.Name
+            local isTarget, matchedName = isTargetEntity(objName)
+            
+            if isTarget and not detectedEntities[obj] then
+                detectedEntities[obj] = true
+                showNotification(matchedName, objName)
+            end
+        end
+    end
+    
+    local descendantAddedConn = workspace.DescendantAdded:Connect(function(descendant)
+        task.wait(0.05)
+        if not isPlayer(descendant) and entityNotificationsActive then
+            local descName = descendant.Name
+            local isTarget, matchedName = isTargetEntity(descName)
+            
+            if isTarget and not detectedEntities[descendant] then
+                detectedEntities[descendant] = true
+                showNotification(matchedName, descName)
+            end
+        end
+    end)
+    table.insert(notificationConnections, descendantAddedConn)
+    
+    print("═══════════════════════════════════════════")
+    print("✨ КРАСИВАЯ СИСТЕМА ОБНАРУЖЕНИЯ ЗАПУЩЕНА ✨")
+    print("═══════════════════════════════════════════")
+end
+
+local function stopEntityNotifications()
+    entityNotificationsActive = false
+    if entityNotificationsCoroutine then
+        pcall(function() coroutine.close(entityNotificationsCoroutine) end)
+        entityNotificationsCoroutine = nil
+    end
+    
+    for _, conn in pairs(notificationConnections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(notificationConnections)
+    table.clear(detectedEntities)
+    
+    for _, child in pairs(LocalPlayer.PlayerGui:GetChildren()) do
+        if child.Name == "BeautifulAlert" then
+            pcall(function() child:Destroy() end)
+        end
+    end
+    
+    print("🔴 Система обнаружения сущностей остановлена")
+end
+
+local function startEntityNotifications()
+    if not scriptLoaded then return end
+    
+    if entityNotificationsCoroutine then
+        pcall(function() coroutine.close(entityNotificationsCoroutine) end)
+    end
+    
+    entityNotificationsCoroutine = coroutine.create(function()
+        setupEntityNotifications()
+        
+        while scriptLoaded and entityNotificationsActive do
+            task.wait(1)
+        end
+    end)
+    pcall(function() coroutine.resume(entityNotificationsCoroutine) end)
+end
+
+-- Функции для Hide ESP
+local hideLastScanTime = 0
+local hideScanInterval = 0.5
+
+local function highlightHideObject(obj)
+    if not hideEspActive or not scriptLoaded then return end
+    if hideHighlightCache[obj] then return end
+    
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "HideHighlight"
+    highlight.FillColor = Color3.fromRGB(128, 128, 128)
+    highlight.FillTransparency = 0.5
+    highlight.OutlineColor = Color3.fromRGB(80, 80, 80)
+    highlight.OutlineTransparency = 0.3
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = obj
+    
+    hideHighlightCache[obj] = highlight
+end
+
+local function highlightRoomsLocker(roomsLocker)
+    if not hideEspActive or not scriptLoaded then return end
+    
+    if roomsLocker:IsA("BasePart") then
+        highlightHideObject(roomsLocker)
+    elseif roomsLocker:IsA("Model") then
+        for _, part in ipairs(roomsLocker:GetDescendants()) do
+            if part:IsA("BasePart") then
+                highlightHideObject(part)
+            end
+        end
+    end
+end
+
+local function cleanupHideHighlights()
+    for obj, highlight in pairs(hideHighlightCache) do
+        if not obj or not obj.Parent then
+            if highlight then
+                pcall(function() highlight:Destroy() end)
+            end
+            hideHighlightCache[obj] = nil
+        end
+    end
+end
+
+local function scanAndHighlightRoomsLockers()
+    if not hideEspActive or not scriptLoaded then return 0 end
+    
+    local foundCount = 0
+    local descendants = workspace:GetDescendants()
+    
+    for _, obj in ipairs(descendants) do
+        if obj.Name == "Rooms_Locker" then
+            local needsHighlight = false
+            
+            if obj:IsA("BasePart") then
+                if not hideHighlightCache[obj] then
+                    needsHighlight = true
+                end
+            elseif obj:IsA("Model") then
+                for _, part in ipairs(obj:GetDescendants()) do
+                    if part:IsA("BasePart") and not hideHighlightCache[part] then
+                        needsHighlight = true
+                        break
+                    end
+                end
+            end
+            
+            if needsHighlight then
+                highlightRoomsLocker(obj)
+                foundCount = foundCount + 1
+            end
+        end
+    end
+    
+    cleanupHideHighlights()
+    return foundCount
+end
+
+local function setupHideTracking()
+    if not hideEspActive or not scriptLoaded then return end
+    
+    local function trackContainer(container)
+        if not hideEspActive or not scriptLoaded then return end
+        
+        local childAddedConn
+        childAddedConn = container.ChildAdded:Connect(function(child)
+            if not hideEspActive or not scriptLoaded then
+                if childAddedConn then childAddedConn:Disconnect() end
+                return
+            end
+            
+            if child.Name == "Rooms_Locker" then
+                task.wait(0.05)
+                highlightRoomsLocker(child)
+            end
+            
+            if child:IsA("Folder") or child:IsA("Model") then
+                task.wait(0.05)
+                for _, subChild in ipairs(child:GetDescendants()) do
+                    if subChild.Name == "Rooms_Locker" then
+                        highlightRoomsLocker(subChild)
+                    end
+                end
+                trackContainer(child)
+            end
+        end)
+    end
+    
+    trackContainer(workspace)
+    
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Folder") or obj:IsA("Model") then
+            trackContainer(obj)
+        end
+    end
+end
+
+local function startHideESP()
+    if not scriptLoaded then return end
+    
+    if hideEspCoroutine then
+        pcall(function() coroutine.close(hideEspCoroutine) end)
+    end
+    
+    hideEspCoroutine = coroutine.create(function()
+        scanAndHighlightRoomsLockers()
+        
+        while scriptLoaded and hideEspActive do
+            local currentTime = tick()
+            if currentTime - hideLastScanTime >= hideScanInterval then
+                scanAndHighlightRoomsLockers()
+                hideLastScanTime = currentTime
+            end
+            task.wait(0.1)
+        end
+    end)
+    pcall(function() coroutine.resume(hideEspCoroutine) end)
+    
+    setupHideTracking()
+end
+
+local function stopHideESP()
+    hideEspActive = false
+    if hideEspCoroutine then
+        pcall(function() coroutine.close(hideEspCoroutine) end)
+        hideEspCoroutine = nil
+    end
+    
+    for obj, highlight in pairs(hideHighlightCache) do
+        pcall(function() highlight:Destroy() end)
+    end
+    table.clear(hideHighlightCache)
+end
+
+-- Функции для Gold ESP
+local goldLastScanTime = 0
+local goldScanInterval = 0.5
+
+local function highlightGoldObject(obj)
+    if not goldEspActive or not scriptLoaded then return end
+    if goldHighlightCache[obj] then return end
+    
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "GoldHighlight"
+    highlight.FillColor = Color3.fromRGB(255, 255, 0)
+    highlight.FillTransparency = 0.5
+    highlight.OutlineColor = Color3.fromRGB(255, 200, 0)
+    highlight.OutlineTransparency = 0.3
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = obj
+    
+    goldHighlightCache[obj] = highlight
+end
+
+local function highlightGoldPile(goldPile)
+    if not goldEspActive or not scriptLoaded then return end
+    
+    if goldPile:IsA("BasePart") then
+        highlightGoldObject(goldPile)
+    elseif goldPile:IsA("Model") then
+        for _, part in ipairs(goldPile:GetDescendants()) do
+            if part:IsA("BasePart") then
+                highlightGoldObject(part)
+            end
+        end
+    end
+end
+
+local function cleanupGoldHighlights()
+    for obj, highlight in pairs(goldHighlightCache) do
+        if not obj or not obj.Parent then
+            if highlight then
+                pcall(function() highlight:Destroy() end)
+            end
+            goldHighlightCache[obj] = nil
+        end
+    end
+end
+
+local function scanAndHighlightGoldPiles()
+    if not goldEspActive or not scriptLoaded then return 0 end
+    
+    local foundCount = 0
+    local descendants = workspace:GetDescendants()
+    
+    for _, obj in ipairs(descendants) do
+        if obj.Name == "GoldPile" then
+            local needsHighlight = false
+            
+            if obj:IsA("BasePart") then
+                if not goldHighlightCache[obj] then
+                    needsHighlight = true
+                end
+            elseif obj:IsA("Model") then
+                for _, part in ipairs(obj:GetDescendants()) do
+                    if part:IsA("BasePart") and not goldHighlightCache[part] then
+                        needsHighlight = true
+                        break
+                    end
+                end
+            end
+            
+            if needsHighlight then
+                highlightGoldPile(obj)
+                foundCount = foundCount + 1
+            end
+        end
+    end
+    
+    cleanupGoldHighlights()
+    return foundCount
+end
+
+local function setupGoldTracking()
+    if not goldEspActive or not scriptLoaded then return end
+    
+    local function trackContainer(container)
+        if not goldEspActive or not scriptLoaded then return end
+        
+        local childAddedConn
+        childAddedConn = container.ChildAdded:Connect(function(child)
+            if not goldEspActive or not scriptLoaded then
+                if childAddedConn then childAddedConn:Disconnect() end
+                return
+            end
+            
+            if child.Name == "GoldPile" then
+                task.wait(0.05)
+                highlightGoldPile(child)
+            end
+            
+            if child:IsA("Folder") or child:IsA("Model") then
+                task.wait(0.05)
+                for _, subChild in ipairs(child:GetDescendants()) do
+                    if subChild.Name == "GoldPile" then
+                        highlightGoldPile(subChild)
+                    end
+                end
+                trackContainer(child)
+            end
+        end)
+    end
+    
+    trackContainer(workspace)
+    
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Folder") or obj:IsA("Model") then
+            trackContainer(obj)
+        end
+    end
+end
+
+local function startGoldESP()
+    if not scriptLoaded then return end
+    
+    if goldEspCoroutine then
+        pcall(function() coroutine.close(goldEspCoroutine) end)
+    end
+    
+    goldEspCoroutine = coroutine.create(function()
+        scanAndHighlightGoldPiles()
+        
+        while scriptLoaded and goldEspActive do
+            local currentTime = tick()
+            if currentTime - goldLastScanTime >= goldScanInterval then
+                scanAndHighlightGoldPiles()
+                goldLastScanTime = currentTime
+            end
+            task.wait(0.1)
+        end
+    end)
+    pcall(function() coroutine.resume(goldEspCoroutine) end)
+    
+    setupGoldTracking()
+end
+
+local function stopGoldESP()
+    goldEspActive = false
+    if goldEspCoroutine then
+        pcall(function() coroutine.close(goldEspCoroutine) end)
+        goldEspCoroutine = nil
+    end
+    
+    for obj, highlight in pairs(goldHighlightCache) do
+        pcall(function() highlight:Destroy() end)
+    end
+    table.clear(goldHighlightCache)
+end
+
+-- Функции для Item ESP
+local function addHighlightToItem(item)
+    if not item:IsA("BasePart") then return end
+    if itemHighlightCache[item] then return end
+    
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "DropHighlight"
+    highlight.FillColor = Color3.fromRGB(255, 0, 0)
+    highlight.OutlineColor = Color3.fromRGB(200, 0, 0)
+    highlight.FillTransparency = 0.3
+    highlight.OutlineTransparency = 0
+    highlight.Adornee = item
+    highlight.Parent = item
+    
+    itemHighlightCache[item] = highlight
+    highlight.Enabled = true
+end
+
+local function removeHighlightFromItem(item)
+    local highlight = itemHighlightCache[item]
+    if highlight then
+        highlight:Destroy()
+        itemHighlightCache[item] = nil
+    end
+end
+
+local function processAllItems(folder)
+    for _, child in ipairs(folder:GetChildren()) do
+        if child:IsA("BasePart") then
+            addHighlightToItem(child)
+        elseif child:IsA("Model") or child:IsA("Folder") then
+            for _, descendant in ipairs(child:GetDescendants()) do
+                if descendant:IsA("BasePart") then
+                    addHighlightToItem(descendant)
+                end
+            end
+        end
+    end
+end
+
+local function clearAllItemHighlights()
+    for item, highlight in pairs(itemHighlightCache) do
+        if highlight and highlight.Parent then
+            highlight:Destroy()
+        end
+    end
+    table.clear(itemHighlightCache)
+end
+
+local function stopItemESP()
+    itemEspActive = false
+    if itemEspCoroutine then
+        coroutine.close(itemEspCoroutine)
+        itemEspCoroutine = nil
+    end
+    clearAllItemHighlights()
+end
+
+local function startItemESP()
+    if not scriptLoaded then return end
+    
+    if itemEspCoroutine then
+        coroutine.close(itemEspCoroutine)
+    end
+    
+    itemEspCoroutine = coroutine.create(function()
+        local connections = {}
+        
+        local function cleanup()
+            for _, conn in pairs(connections) do
+                if conn then pcall(function() conn:Disconnect() end) end
+            end
+            connections = {}
+        end
+        
+        local function setupDropsTracking(dropsFolder)
+            if not scriptLoaded or not itemEspActive then 
+                cleanup()
+                return 
+            end
+            
+            pcall(function() processAllItems(dropsFolder) end)
+            
+            local childAddedConn = dropsFolder.ChildAdded:Connect(function(child)
+                if not scriptLoaded or not itemEspActive then return end
+                task.wait()
+                pcall(function()
+                    if child:IsA("BasePart") then
+                        addHighlightToItem(child)
+                    elseif child:IsA("Model") or child:IsA("Folder") then
+                        for _, descendant in ipairs(child:GetDescendants()) do
+                            if descendant:IsA("BasePart") then
+                                addHighlightToItem(descendant)
+                            end
+                        end
+                    end
+                end)
+            end)
+            table.insert(connections, childAddedConn)
+            
+            local childRemovedConn = dropsFolder.ChildRemoved:Connect(function(child)
+                if not scriptLoaded or not itemEspActive then return end
+                pcall(function()
+                    if child:IsA("BasePart") then
+                        removeHighlightFromItem(child)
+                    elseif child:IsA("Model") or child:IsA("Folder") then
+                        for _, descendant in ipairs(child:GetDescendants()) do
+                            if descendant:IsA("BasePart") then
+                                removeHighlightFromItem(descendant)
+                            end
+                        end
+                    end
+                end)
+            end)
+            table.insert(connections, childRemovedConn)
+        end
+        
+        local function waitForDrops()
+            if not scriptLoaded or not itemEspActive then return end
+            local dropsFolder = workspace:FindFirstChild("Drops")
+            
+            if dropsFolder then
+                setupDropsTracking(dropsFolder)
+            else
+                local connection
+                connection = workspace.ChildAdded:Connect(function(child)
+                    if child.Name == "Drops" and child:IsA("Folder") and scriptLoaded and itemEspActive then
+                        connection:Disconnect()
+                        setupDropsTracking(child)
+                    end
+                end)
+                table.insert(connections, connection)
+            end
+        end
+        
+        while scriptLoaded and itemEspActive do
+            cleanup()
+            waitForDrops()
+            task.wait(2)
+        end
+        
+        cleanup()
+    end)
+    coroutine.resume(itemEspCoroutine)
+end
+
+-- Функция полной выгрузки скрипта
+local function unloadScript()
+    if not scriptLoaded then return end
+    
+    scriptLoaded = false
+    
+    if doorEspCoroutine then
+        pcall(function() coroutine.close(doorEspCoroutine) end)
+        doorEspCoroutine = nil
+    end
+    pcall(function() removeAllDoorHighlights() end)
+    
+    if itemEspCoroutine then
+        pcall(function() coroutine.close(itemEspCoroutine) end)
+        itemEspCoroutine = nil
+    end
+    pcall(function() clearAllItemHighlights() end)
+    
+    stopGoldESP()
+    stopHideESP()
+    stopEntityNotifications()
+    
+    if antiA90Coroutine then
+        pcall(function() coroutine.close(antiA90Coroutine) end)
+        antiA90Coroutine = nil
+    end
+    
+    if screenGui then
+        pcall(function() screenGui:Destroy() end)
+        screenGui = nil
+    end
+    
+    isMenuOpen = false
+    doorEspActive = false
+    itemEspActive = false
+    goldEspActive = false
+    hideEspActive = false
+    antiA90Active = false
+    
+    print("✅ Скрипт полностью выгружен!")
+end
+
 -- Функция создания меню
 local function createMenu()
+    if not scriptLoaded then return end
+    
+    if screenGui then
+        pcall(function() screenGui:Destroy() end)
+        screenGui = nil
+    end
+    
     screenGui = Instance.new("ScreenGui")
     screenGui.Name = "DraggableMenu"
     screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    screenGui.ResetOnSpawn = false
     
     mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 200, 0, 120)
+    mainFrame.Size = UDim2.new(0, 550, 0, 480)
     
-    -- Устанавливаем сохраненную позицию или позицию по умолчанию
     if savedPosition then
         mainFrame.Position = savedPosition
     else
-        mainFrame.Position = UDim2.new(0.5, -100, 0.5, -60)
+        mainFrame.Position = UDim2.new(0.5, -275, 0.5, -240)
     end
     
-    mainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    mainFrame.BackgroundTransparency = 0.1
+    mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    mainFrame.BackgroundTransparency = 0
     mainFrame.BorderSizePixel = 0
-    mainFrame.Active = true
-    mainFrame.Draggable = false
+    mainFrame.ClipsDescendants = true
     mainFrame.Parent = screenGui
     
-    -- Сглаживание углов
-    local uiCorner = Instance.new("UICorner")
-    uiCorner.CornerRadius = UDim.new(0, 8)
-    uiCorner.Parent = mainFrame
+    local mainCorner = Instance.new("UICorner")
+    mainCorner.CornerRadius = UDim.new(0, 12)
+    mainCorner.Parent = mainFrame
     
-    -- Заголовок (для перетаскивания)
+    local mainStroke = Instance.new("UIStroke")
+    mainStroke.Color = Color3.fromRGB(60, 60, 70)
+    mainStroke.Thickness = 1
+    mainStroke.Parent = mainFrame
+    
+    -- Заголовок
     local titleBar = Instance.new("Frame")
     titleBar.Name = "TitleBar"
-    titleBar.Size = UDim2.new(1, 0, 0, 30)
-    titleBar.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    titleBar.BackgroundTransparency = 0.1
+    titleBar.Size = UDim2.new(1, 0, 0, 50)
+    titleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+    titleBar.BackgroundTransparency = 0
     titleBar.BorderSizePixel = 0
     titleBar.Parent = mainFrame
     
     local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 8)
+    titleCorner.CornerRadius = UDim.new(0, 12)
     titleCorner.Parent = titleBar
     
     local titleText = Instance.new("TextLabel")
     titleText.Size = UDim2.new(1, 0, 1, 0)
     titleText.BackgroundTransparency = 1
-    titleText.Text = "Меню"
+    titleText.Text = "🎮 Yami.SC"
     titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleText.TextSize = 14
+    titleText.TextSize = 18
     titleText.Font = Enum.Font.GothamBold
     titleText.TextXAlignment = Enum.TextXAlignment.Center
     titleText.Parent = titleBar
     
+    -- Панель вкладок
+    local tabBar = Instance.new("Frame")
+    tabBar.Name = "TabBar"
+    tabBar.Size = UDim2.new(1, 0, 0, 45)
+    tabBar.Position = UDim2.new(0, 0, 0, 50)
+    tabBar.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    tabBar.BackgroundTransparency = 0
+    tabBar.BorderSizePixel = 0
+    tabBar.Parent = mainFrame
+    
+    local tabs = {"PLAYER", "MOVEMENT", "VISUALS", "AUTOMATION", "Anti-entity", "SETTINGS"}
+    local tabButtons = {}
+    
+    local tabScrollFrame = Instance.new("ScrollingFrame")
+    tabScrollFrame.Size = UDim2.new(1, 0, 1, 0)
+    tabScrollFrame.BackgroundTransparency = 1
+    tabScrollFrame.BorderSizePixel = 0
+    tabScrollFrame.ScrollBarThickness = 4
+    tabScrollFrame.CanvasSize = UDim2.new(#tabs * 0.2, 0, 0, 0)
+    tabScrollFrame.Parent = tabBar
+    
+    local tabList = Instance.new("UIListLayout")
+    tabList.FillDirection = Enum.FillDirection.Horizontal
+    tabList.Padding = UDim.new(0, 5)
+    tabList.Parent = tabScrollFrame
+    
+    for i, tabName in ipairs(tabs) do
+        local button = Instance.new("TextButton")
+        button.Size = UDim2.new(0, 85, 1, -10)
+        button.BackgroundColor3 = i == 1 and Color3.fromRGB(55, 55, 65) or Color3.fromRGB(25, 25, 30)
+        button.BackgroundTransparency = 0
+        button.Text = tabName
+        button.TextColor3 = i == 1 and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(150, 150, 160)
+        button.TextSize = 11
+        button.Font = Enum.Font.GothamSemibold
+        button.BorderSizePixel = 0
+        button.Parent = tabScrollFrame
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = button
+        
+        tabButtons[tabName] = button
+    end
+    
+    -- Контейнер для содержимого
+    local contentContainer = Instance.new("Frame")
+    contentContainer.Name = "ContentContainer"
+    contentContainer.Size = UDim2.new(1, 0, 1, -95)
+    contentContainer.Position = UDim2.new(0, 0, 0, 95)
+    contentContainer.BackgroundTransparency = 1
+    contentContainer.Parent = mainFrame
+    
+    -- Вкладка VISUALS (все ESP функции здесь)
+    local visualsFrame = Instance.new("Frame")
+    visualsFrame.Name = "VISUALSFrame"
+    visualsFrame.Size = UDim2.new(1, 0, 1, 0)
+    visualsFrame.BackgroundTransparency = 1
+    visualsFrame.Visible = true
+    visualsFrame.Parent = contentContainer
+    
+    local visualsTitle = Instance.new("TextLabel")
+    visualsTitle.Size = UDim2.new(1, 0, 0, 30)
+    visualsTitle.Position = UDim2.new(0, 0, 0, 5)
+    visualsTitle.BackgroundTransparency = 1
+    visualsTitle.Text = "🎨 VISUAL SETTINGS"
+    visualsTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+    visualsTitle.TextSize = 14
+    visualsTitle.Font = Enum.Font.GothamBold
+    visualsTitle.TextXAlignment = Enum.TextXAlignment.Center
+    visualsTitle.Parent = visualsFrame
+    
+    -- Левая колонка VISUALS
+    local visualsLeft = Instance.new("Frame")
+    visualsLeft.Size = UDim2.new(0.5, -10, 1, -40)
+    visualsLeft.Position = UDim2.new(0, 5, 0, 40)
+    visualsLeft.BackgroundTransparency = 1
+    visualsLeft.Parent = visualsFrame
+    
+    -- Правая колонка VISUALS
+    local visualsRight = Instance.new("Frame")
+    visualsRight.Size = UDim2.new(0.5, -10, 1, -40)
+    visualsRight.Position = UDim2.new(0.5, 5, 0, 40)
+    visualsRight.BackgroundTransparency = 1
+    visualsRight.Parent = visualsFrame
+    
     -- Кнопка Door ESP
     local doorEspButton = Instance.new("TextButton")
-    doorEspButton.Size = UDim2.new(0, 180, 0, 30)
-    doorEspButton.Position = UDim2.new(0.5, -90, 0, 40)
-    doorEspButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    doorEspButton.BackgroundTransparency = 0.1
+    doorEspButton.Size = UDim2.new(1, -10, 0, 45)
+    doorEspButton.Position = UDim2.new(0, 5, 0, 10)
+    doorEspButton.BackgroundColor3 = doorEspActive and Color3.fromRGB(30, 120, 30) or Color3.fromRGB(45, 45, 45)
+    doorEspButton.BackgroundTransparency = 0
     doorEspButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    doorEspButton.TextSize = 12
-    doorEspButton.Font = Enum.Font.Gotham
+    doorEspButton.TextSize = 13
+    doorEspButton.Text = doorEspActive and "✓ DOOR ESP" or "DOOR ESP"
+    doorEspButton.Font = Enum.Font.GothamBold
     doorEspButton.BorderSizePixel = 0
-    doorEspButton.Parent = mainFrame
+    doorEspButton.Parent = visualsLeft
     
-    -- Устанавливаем состояние кнопки Door ESP
-    if doorEspActive then
-        doorEspButton.Text = "Door ESP (Вкл)"
-        doorEspButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
-    else
-        doorEspButton.Text = "Door ESP (Выкл)"
-        doorEspButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    end
+    local doorCorner = Instance.new("UICorner")
+    doorCorner.CornerRadius = UDim.new(0, 8)
+    doorCorner.Parent = doorEspButton
     
-    local buttonCorner1 = Instance.new("UICorner")
-    buttonCorner1.CornerRadius = UDim.new(0, 4)
-    buttonCorner1.Parent = doorEspButton
+    -- Кнопка Item ESP
+    local itemEspButton = Instance.new("TextButton")
+    itemEspButton.Size = UDim2.new(1, -10, 0, 45)
+    itemEspButton.Position = UDim2.new(0, 5, 0, 65)
+    itemEspButton.BackgroundColor3 = itemEspActive and Color3.fromRGB(30, 120, 30) or Color3.fromRGB(45, 45, 45)
+    itemEspButton.BackgroundTransparency = 0
+    itemEspButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    itemEspButton.TextSize = 13
+    itemEspButton.Text = itemEspActive and "✓ ITEM ESP" or "ITEM ESP"
+    itemEspButton.Font = Enum.Font.GothamBold
+    itemEspButton.BorderSizePixel = 0
+    itemEspButton.Parent = visualsLeft
     
-    -- Кнопка Anti-pidor A-90
+    local itemCorner = Instance.new("UICorner")
+    itemCorner.CornerRadius = UDim.new(0, 8)
+    itemCorner.Parent = itemEspButton
+    
+    -- Кнопка Gold ESP
+    local goldEspButton = Instance.new("TextButton")
+    goldEspButton.Size = UDim2.new(1, -10, 0, 45)
+    goldEspButton.Position = UDim2.new(0, 5, 0, 120)
+    goldEspButton.BackgroundColor3 = goldEspActive and Color3.fromRGB(30, 120, 30) or Color3.fromRGB(45, 45, 45)
+    goldEspButton.BackgroundTransparency = 0
+    goldEspButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    goldEspButton.TextSize = 13
+    goldEspButton.Text = goldEspActive and "✓ GOLD ESP" or "GOLD ESP"
+    goldEspButton.Font = Enum.Font.GothamBold
+    goldEspButton.BorderSizePixel = 0
+    goldEspButton.Parent = visualsRight
+    
+    local goldCorner = Instance.new("UICorner")
+    goldCorner.CornerRadius = UDim.new(0, 8)
+    goldCorner.Parent = goldEspButton
+    
+    -- Кнопка Hide ESP
+    local hideEspButton = Instance.new("TextButton")
+    hideEspButton.Size = UDim2.new(1, -10, 0, 45)
+    hideEspButton.Position = UDim2.new(0, 5, 0, 175)
+    hideEspButton.BackgroundColor3 = hideEspActive and Color3.fromRGB(30, 120, 30) or Color3.fromRGB(45, 45, 45)
+    hideEspButton.BackgroundTransparency = 0
+    hideEspButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    hideEspButton.TextSize = 13
+    hideEspButton.Text = hideEspActive and "✓ HIDE ESP" or "HIDE ESP"
+    hideEspButton.Font = Enum.Font.GothamBold
+    hideEspButton.BorderSizePixel = 0
+    hideEspButton.Parent = visualsRight
+    
+    local hideCorner = Instance.new("UICorner")
+    hideCorner.CornerRadius = UDim.new(0, 8)
+    hideCorner.Parent = hideEspButton
+    
+    -- Вкладка Anti-entity с двумя колонками
+    local antiEntityFrame = Instance.new("Frame")
+    antiEntityFrame.Name = "AntiEntityFrame"
+    antiEntityFrame.Size = UDim2.new(1, 0, 1, 0)
+    antiEntityFrame.BackgroundTransparency = 1
+    antiEntityFrame.Visible = false
+    antiEntityFrame.Parent = contentContainer
+    
+    local antiTitle = Instance.new("TextLabel")
+    antiTitle.Size = UDim2.new(1, 0, 0, 30)
+    antiTitle.Position = UDim2.new(0, 0, 0, 5)
+    antiTitle.BackgroundTransparency = 1
+    antiTitle.Text = "🛡️ ANTI-ENTITY & NOTIFICATIONS"
+    antiTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+    antiTitle.TextSize = 14
+    antiTitle.Font = Enum.Font.GothamBold
+    antiTitle.TextXAlignment = Enum.TextXAlignment.Center
+    antiTitle.Parent = antiEntityFrame
+    
+    local antiLeft = Instance.new("Frame")
+    antiLeft.Size = UDim2.new(0.5, -10, 1, -40)
+    antiLeft.Position = UDim2.new(0, 5, 0, 40)
+    antiLeft.BackgroundTransparency = 1
+    antiLeft.Parent = antiEntityFrame
+    
+    local antiRight = Instance.new("Frame")
+    antiRight.Size = UDim2.new(0.5, -10, 1, -40)
+    antiRight.Position = UDim2.new(0.5, 5, 0, 40)
+    antiRight.BackgroundTransparency = 1
+    antiRight.Parent = antiEntityFrame
+    
+    local antiLeftTitle = Instance.new("TextLabel")
+    antiLeftTitle.Size = UDim2.new(1, -10, 0, 25)
+    antiLeftTitle.Position = UDim2.new(0, 5, 0, 0)
+    antiLeftTitle.BackgroundTransparency = 1
+    antiLeftTitle.Text = "⚡ ANTI-ENTITY"
+    antiLeftTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+    antiLeftTitle.TextSize = 11
+    antiLeftTitle.Font = Enum.Font.GothamBold
+    antiLeftTitle.TextXAlignment = Enum.TextXAlignment.Left
+    antiLeftTitle.Parent = antiLeft
+    
+    local antiRightTitle = Instance.new("TextLabel")
+    antiRightTitle.Size = UDim2.new(1, -10, 0, 25)
+    antiRightTitle.Position = UDim2.new(0, 5, 0, 0)
+    antiRightTitle.BackgroundTransparency = 1
+    antiRightTitle.Text = "🔔 NOTIFICATIONS"
+    antiRightTitle.TextColor3 = Color3.fromRGB(200, 200, 200)
+    antiRightTitle.TextSize = 11
+    antiRightTitle.Font = Enum.Font.GothamBold
+    antiRightTitle.TextXAlignment = Enum.TextXAlignment.Left
+    antiRightTitle.Parent = antiRight
+    
     local antiA90Button = Instance.new("TextButton")
-    antiA90Button.Size = UDim2.new(0, 180, 0, 30)
-    antiA90Button.Position = UDim2.new(0.5, -90, 0, 80)
-    antiA90Button.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    antiA90Button.BackgroundTransparency = 0.1
+    antiA90Button.Size = UDim2.new(1, -10, 0, 45)
+    antiA90Button.Position = UDim2.new(0, 5, 0, 30)
+    antiA90Button.BackgroundColor3 = antiA90Active and Color3.fromRGB(30, 120, 30) or Color3.fromRGB(45, 45, 45)
+    antiA90Button.BackgroundTransparency = 0
     antiA90Button.TextColor3 = Color3.fromRGB(255, 255, 255)
-    antiA90Button.TextSize = 12
-    antiA90Button.Font = Enum.Font.Gotham
+    antiA90Button.TextSize = 13
+    antiA90Button.Text = antiA90Active and "✓ ANTI A-90" or "ANTI A-90"
+    antiA90Button.Font = Enum.Font.GothamBold
     antiA90Button.BorderSizePixel = 0
-    antiA90Button.Parent = mainFrame
+    antiA90Button.Parent = antiLeft
     
-    -- Устанавливаем состояние кнопки Anti-pidor A-90
-    if antiA90Active then
-        antiA90Button.Text = "Anti-pidor A-90 (Active)"
-        antiA90Button.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
-    else
-        antiA90Button.Text = "Anti-pidor A-90"
-        antiA90Button.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    local antiCorner = Instance.new("UICorner")
+    antiCorner.CornerRadius = UDim.new(0, 8)
+    antiCorner.Parent = antiA90Button
+    
+    local entityNotifButton = Instance.new("TextButton")
+    entityNotifButton.Size = UDim2.new(1, -10, 0, 45)
+    entityNotifButton.Position = UDim2.new(0, 5, 0, 30)
+    entityNotifButton.BackgroundColor3 = entityNotificationsActive and Color3.fromRGB(30, 120, 30) or Color3.fromRGB(45, 45, 45)
+    entityNotifButton.BackgroundTransparency = 0
+    entityNotifButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    entityNotifButton.TextSize = 13
+    entityNotifButton.Text = entityNotificationsActive and "✓ ENTITY NOTIFICATIONS" or "ENTITY NOTIFICATIONS"
+    entityNotifButton.Font = Enum.Font.GothamBold
+    entityNotifButton.BorderSizePixel = 0
+    entityNotifButton.Parent = antiRight
+    
+    local entityCorner = Instance.new("UICorner")
+    entityCorner.CornerRadius = UDim.new(0, 8)
+    entityCorner.Parent = entityNotifButton
+    
+    -- Вкладка SETTINGS
+    local settingsFrame = Instance.new("Frame")
+    settingsFrame.Name = "SETTINGSFrame"
+    settingsFrame.Size = UDim2.new(1, 0, 1, 0)
+    settingsFrame.BackgroundTransparency = 1
+    settingsFrame.Visible = false
+    settingsFrame.Parent = contentContainer
+    
+    local unloadButton = Instance.new("TextButton")
+    unloadButton.Size = UDim2.new(0, 250, 0, 50)
+    unloadButton.Position = UDim2.new(0.5, -125, 0, 100)
+    unloadButton.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
+    unloadButton.BackgroundTransparency = 0
+    unloadButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    unloadButton.TextSize = 16
+    unloadButton.Text = "⚠ UNLOAD SCRIPT"
+    unloadButton.Font = Enum.Font.GothamBold
+    unloadButton.BorderSizePixel = 0
+    unloadButton.Parent = settingsFrame
+    
+    local unloadCorner = Instance.new("UICorner")
+    unloadCorner.CornerRadius = UDim.new(0, 8)
+    unloadCorner.Parent = unloadButton
+    
+    local infoText = Instance.new("TextLabel")
+    infoText.Size = UDim2.new(1, 0, 0, 30)
+    infoText.Position = UDim2.new(0, 0, 0, 180)
+    infoText.BackgroundTransparency = 1
+    infoText.Text = "Press K to close menu"
+    infoText.TextColor3 = Color3.fromRGB(120, 120, 120)
+    infoText.TextSize = 12
+    infoText.Font = Enum.Font.Gotham
+    infoText.Parent = settingsFrame
+    
+    -- Заглушки для других вкладок
+    local function createPlaceholderTab(parent, name, icon)
+        local frame = Instance.new("Frame")
+        frame.Name = name .. "Frame"
+        frame.Size = UDim2.new(1, 0, 1, 0)
+        frame.BackgroundTransparency = 1
+        frame.Visible = false
+        frame.Parent = parent
+        
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, 0, 0, 30)
+        label.Position = UDim2.new(0, 0, 0, 100)
+        label.BackgroundTransparency = 1
+        label.Text = icon .. " " .. name .. " - Coming Soon"
+        label.TextColor3 = Color3.fromRGB(150, 150, 150)
+        label.TextSize = 18
+        label.Font = Enum.Font.Gotham
+        label.TextXAlignment = Enum.TextXAlignment.Center
+        label.Parent = frame
+        
+        return frame
     end
     
-    local buttonCorner2 = Instance.new("UICorner")
-    buttonCorner2.CornerRadius = UDim.new(0, 4)
-    buttonCorner2.Parent = antiA90Button
+    createPlaceholderTab(contentContainer, "PLAYER", "👤")
+    createPlaceholderTab(contentContainer, "MOVEMENT", "🏃")
+    createPlaceholderTab(contentContainer, "AUTOMATION", "🤖")
     
-    -- Функции для кнопок
+    -- Обработчики кнопок VISUALS
     doorEspButton.MouseButton1Click:Connect(function()
+        if not scriptLoaded then return end
+        
         doorEspActive = not doorEspActive
         
         if doorEspActive then
-            doorEspButton.Text = "Door ESP (Вкл)"
-            doorEspButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+            doorEspButton.Text = "✓ DOOR ESP"
+            doorEspButton.BackgroundColor3 = Color3.fromRGB(30, 120, 30)
             
-            -- Запуск Door ESP
             if doorEspCoroutine then
-                coroutine.close(doorEspCoroutine)
+                pcall(function() coroutine.close(doorEspCoroutine) end)
             end
             doorEspCoroutine = coroutine.create(function()
-                while doorEspActive do
+                while scriptLoaded and doorEspActive do
                     task.wait(0.04)
                     local currentRooms = workspace:FindFirstChild("CurrentRooms")
                     if currentRooms then
                         for _, v in next, currentRooms:GetChildren() do
                             if v and v:FindFirstChild("Door") and v.Door:FindFirstChild("Door") then
                                 local doorPart = v.Door.Door
-                                if doorPart and not doorPart:FindFirstChild("DoorHighlight") then
+                                if doorPart and not doorHighlightCache[doorPart] then
                                     local hg = Instance.new("Highlight")
                                     hg.Name = "DoorHighlight"
                                     hg.Parent = doorPart
-                                    hg.FillColor = Color3.fromRGB(241, 196, 15)
-                                    hg.FillTransparency = 0.5
-                                    hg.OutlineTransparency = 0
+                                    hg.FillColor = Color3.fromRGB(255, 120, 120)
+                                    hg.OutlineColor = Color3.fromRGB(180, 60, 60)
+                                    hg.FillTransparency = 0.65
+                                    hg.OutlineTransparency = 0.2
                                     hg.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                                    doorHighlightCache[doorPart] = hg
                                 end
                             end
                         end
                     end
                 end
             end)
-            coroutine.resume(doorEspCoroutine)
+            pcall(function() coroutine.resume(doorEspCoroutine) end)
         else
-            doorEspButton.Text = "Door ESP (Выкл)"
-            doorEspButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+            doorEspButton.Text = "DOOR ESP"
+            doorEspButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
             
-            -- Остановка Door ESP и удаление всех хайлайтов
             if doorEspCoroutine then
-                coroutine.close(doorEspCoroutine)
+                pcall(function() coroutine.close(doorEspCoroutine) end)
                 doorEspCoroutine = nil
             end
-            removeAllHighlights()
+            removeAllDoorHighlights()
         end
     end)
     
-    -- Кнопка Anti-pidor A-90 (один раз активируется и не выключается)
+    itemEspButton.MouseButton1Click:Connect(function()
+        if not scriptLoaded then return end
+        
+        itemEspActive = not itemEspActive
+        
+        if itemEspActive then
+            itemEspButton.Text = "✓ ITEM ESP"
+            itemEspButton.BackgroundColor3 = Color3.fromRGB(30, 120, 30)
+            startItemESP()
+        else
+            itemEspButton.Text = "ITEM ESP"
+            itemEspButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+            stopItemESP()
+        end
+    end)
+    
+    goldEspButton.MouseButton1Click:Connect(function()
+        if not scriptLoaded then return end
+        
+        goldEspActive = not goldEspActive
+        
+        if goldEspActive then
+            goldEspButton.Text = "✓ GOLD ESP"
+            goldEspButton.BackgroundColor3 = Color3.fromRGB(30, 120, 30)
+            startGoldESP()
+        else
+            goldEspButton.Text = "GOLD ESP"
+            goldEspButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+            stopGoldESP()
+        end
+    end)
+    
+    hideEspButton.MouseButton1Click:Connect(function()
+        if not scriptLoaded then return end
+        
+        hideEspActive = not hideEspActive
+        
+        if hideEspActive then
+            hideEspButton.Text = "✓ HIDE ESP"
+            hideEspButton.BackgroundColor3 = Color3.fromRGB(30, 120, 30)
+            startHideESP()
+        else
+            hideEspButton.Text = "HIDE ESP"
+            hideEspButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+            stopHideESP()
+        end
+    end)
+    
+    -- Обработчики кнопок Anti-entity
     antiA90Button.MouseButton1Click:Connect(function()
+        if not scriptLoaded then return end
         if not antiA90Active then
             antiA90Active = true
-            antiA90Button.Text = "Anti-pidor A-90 (Active)"
-            antiA90Button.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+            antiA90Button.Text = "✓ ANTI A-90"
+            antiA90Button.BackgroundColor3 = Color3.fromRGB(30, 120, 30)
             
-            -- Запуск Anti-pidor A-90 (бесконечный цикл)
             if antiA90Coroutine then
-                coroutine.close(antiA90Coroutine)
+                pcall(function() coroutine.close(antiA90Coroutine) end)
             end
             antiA90Coroutine = coroutine.create(function()
-                while antiA90Active do
+                while scriptLoaded and antiA90Active do
                     task.wait(0.1)
-                    local success, jumpscare = pcall(function()
+                    pcall(function()
                         local mainUI = LocalPlayer.PlayerGui:FindFirstChild("MainUI")
                         if mainUI then
                             local jumpscareFolder = mainUI:FindFirstChild("Jumpscare")
                             if jumpscareFolder then
-                                return jumpscareFolder:FindFirstChild("Jumpscare_A90")
+                                local jumpscare = jumpscareFolder:FindFirstChild("Jumpscare_A90")
+                                if jumpscare then
+                                    jumpscare:Destroy()
+                                end
                             end
                         end
-                        return nil
                     end)
-                    
-                    if success and jumpscare then
-                        pcall(function()
-                            jumpscare:Destroy()
-                        end)
-                    end
                 end
             end)
-            coroutine.resume(antiA90Coroutine)
+            pcall(function() coroutine.resume(antiA90Coroutine) end)
         end
     end)
     
-    -- Логика перетаскивания с сохранением позиции
+    entityNotifButton.MouseButton1Click:Connect(function()
+        if not scriptLoaded then return end
+        
+        entityNotificationsActive = not entityNotificationsActive
+        
+        if entityNotificationsActive then
+            entityNotifButton.Text = "✓ ENTITY NOTIFICATIONS"
+            entityNotifButton.BackgroundColor3 = Color3.fromRGB(30, 120, 30)
+            startEntityNotifications()
+        else
+            entityNotifButton.Text = "ENTITY NOTIFICATIONS"
+            entityNotifButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+            stopEntityNotifications()
+        end
+    end)
+    
+    unloadButton.MouseButton1Click:Connect(function()
+        unloadScript()
+    end)
+    
+    -- Переключение вкладок
+    local function switchTab(tabName)
+        if not scriptLoaded then return end
+        currentTab = tabName
+        
+        for name, button in pairs(tabButtons) do
+            if name == tabName then
+                button.BackgroundColor3 = Color3.fromRGB(55, 55, 65)
+                button.TextColor3 = Color3.fromRGB(255, 255, 255)
+            else
+                button.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+                button.TextColor3 = Color3.fromRGB(150, 150, 160)
+            end
+        end
+        
+        for _, child in pairs(contentContainer:GetChildren()) do
+            child.Visible = false
+        end
+        
+        if tabName == "PLAYER" then
+            contentContainer.PLAYERFrame.Visible = true
+        elseif tabName == "MOVEMENT" then
+            contentContainer.MOVEMENTFrame.Visible = true
+        elseif tabName == "VISUALS" then
+            contentContainer.VISUALSFrame.Visible = true
+        elseif tabName == "AUTOMATION" then
+            contentContainer.AUTOMATIONFrame.Visible = true
+        elseif tabName == "Anti-entity" then
+            contentContainer.AntiEntityFrame.Visible = true
+        elseif tabName == "SETTINGS" then
+            contentContainer.SETTINGSFrame.Visible = true
+        end
+    end
+    
+    for tabName, button in pairs(tabButtons) do
+        button.MouseButton1Click:Connect(function()
+            switchTab(tabName)
+        end)
+    end
+    
+    -- Перетаскивание меню
+    local dragging = false
+    local dragStartPos = nil
+    local dragStartMouse = nil
+    
     titleBar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            isDragging = true
-            dragStart = input.Position
+            dragging = true
+            dragStartMouse = input.Position
             dragStartPos = mainFrame.Position
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    isDragging = false
-                    -- Сохраняем позицию при отпускании
-                    savedPosition = mainFrame.Position
-                end
-            end)
         end
     end)
     
     UserInputService.InputChanged:Connect(function(input)
-        if isDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local delta = input.Position - dragStart
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStartMouse
             mainFrame.Position = UDim2.new(
-                dragStartPos.X.Scale, 
+                dragStartPos.X.Scale,
                 dragStartPos.X.Offset + delta.X,
-                dragStartPos.Y.Scale, 
+                dragStartPos.Y.Scale,
                 dragStartPos.Y.Offset + delta.Y
             )
         end
     end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and dragging then
+            dragging = false
+            savedPosition = mainFrame.Position
+        end
+    end)
 end
 
--- Управление открытием/закрытием по клавише K
+-- Обработка нажатия K
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
+    if not scriptLoaded then return end
     
     if input.KeyCode == Enum.KeyCode.K then
         if isMenuOpen then
             if screenGui then
-                -- Сохраняем позицию перед закрытием
                 if mainFrame then
                     savedPosition = mainFrame.Position
                 end
-                screenGui:Destroy()
+                pcall(function() screenGui:Destroy() end)
                 screenGui = nil
                 isMenuOpen = false
             end
@@ -273,48 +1490,16 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
--- Очистка при перерождении персонажа, но с сохранением состояния Anti-pidor
-LocalPlayer.CharacterAdded:Connect(function()
-    -- Останавливаем Door ESP если он активен
-    if doorEspActive then
-        if doorEspCoroutine then
-            coroutine.close(doorEspCoroutine)
-            doorEspCoroutine = nil
-        end
-        removeAllHighlights()
-        -- Сбрасываем состояние Door ESP при перерождении
-        doorEspActive = false
-    end
-    
-    -- Anti-pidor A-90 продолжает работать если был активирован
-    if antiA90Active and not antiA90Coroutine then
-        antiA90Coroutine = coroutine.create(function()
-            while antiA90Active do
-                task.wait(0.1)
-                local success, jumpscare = pcall(function()
-                    local mainUI = LocalPlayer.PlayerGui:FindFirstChild("MainUI")
-                    if mainUI then
-                        local jumpscareFolder = mainUI:FindFirstChild("Jumpscare")
-                        if jumpscareFolder then
-                            return jumpscareFolder:FindFirstChild("Jumpscare_A90")
-                        end
-                    end
-                    return nil
-                end)
-                
-                if success and jumpscare then
-                    pcall(function()
-                        jumpscare:Destroy()
-                    end)
-                end
-            end
-        end)
-        coroutine.resume(antiA90Coroutine)
-    end
-end)
-
--- Информация в консоль
-print("Скрипт загружен! Нажмите K для открытия меню")
-if antiA90Active then
-    print("Anti-pidor A-90 уже активирован")
-end
+print("✅ Скрипт успешно загружен! Нажми K для открытия меню")
+print("🎮 Yami.SC - Все ESP функции в разделе VISUALS")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("📍 VISUALS:")
+print("   • DOOR ESP - бледно-красный (двери)")
+print("   • ITEM ESP - красный (предметы из Drops)")
+print("   • GOLD ESP - жёлтый (GoldPile)")
+print("   • HIDE ESP - серый (Rooms_Locker)")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+print("📍 Anti-entity:")
+print("   • ANTI A-90 - защита от jumpscare")
+print("   • ENTITY NOTIFICATIONS - уведомления о сущностях")
+print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
